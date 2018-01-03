@@ -11,6 +11,7 @@
 package com.ardor3d.example.input;
 
 import java.net.URISyntaxException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -66,11 +67,17 @@ import com.ardor3d.input.swt.SwtGestureWrapper;
 import com.ardor3d.input.swt.SwtKeyboardWrapper;
 import com.ardor3d.input.swt.SwtMouseWrapper;
 import com.ardor3d.math.MathUtils;
+import com.ardor3d.math.Vector3;
 import com.ardor3d.renderer.Camera;
+import com.ardor3d.renderer.queue.RenderBucketType;
 import com.ardor3d.renderer.state.BlendState;
 import com.ardor3d.renderer.state.TextureState;
 import com.ardor3d.scene.state.lwjgl.util.SharedLibraryLoader;
 import com.ardor3d.scenegraph.Node;
+import com.ardor3d.scenegraph.controller.SpatialController;
+import com.ardor3d.scenegraph.hint.LightCombineMode;
+import com.ardor3d.ui.text.BMText.Align;
+import com.ardor3d.ui.text.BasicText;
 import com.ardor3d.util.ReadOnlyTimer;
 import com.ardor3d.util.TextureManager;
 import com.ardor3d.util.Timer;
@@ -78,6 +85,7 @@ import com.ardor3d.util.resource.ResourceLocatorTool;
 import com.ardor3d.util.resource.SimpleResourceLocator;
 import com.google.common.collect.Lists;
 
+@SuppressWarnings("rawtypes")
 public class GesturesSwtExample implements Updater {
 
     // private static final Logger logger = Logger.getLogger(GesturesSwtExample.class.toString());
@@ -97,6 +105,13 @@ public class GesturesSwtExample implements Updater {
     private double timeScale = 1;
     private double currentRot = MathUtils.HALF_PI;
     private final double ROT_SCALE = 10 / MathUtils.PI;
+
+    private final long startTime = System.currentTimeMillis();
+    private long lastTime = startTime;
+    private final HashMap<Class, Integer> eventCount = new HashMap<Class, Integer>();
+    private final HashMap<Class, Integer> eventTotal = new HashMap<Class, Integer>();
+    private final HashMap<Class, BasicText> eventInfo = new HashMap<Class, BasicText>();
+    private final Node textNode = new Node("Text");
 
     public GesturesSwtExample(final BasicScene scene, final LogicalLayer logicalLayer) {
         this.scene = scene;
@@ -127,6 +142,15 @@ public class GesturesSwtExample implements Updater {
         blend.setReference(0f);
         blend.setTestFunction(BlendState.TestFunction.GreaterThan);
         root.setRenderState(blend);
+
+        root.attachChild(textNode);
+        textNode.getSceneHints().setRenderBucketType(RenderBucketType.Ortho);
+        textNode.getSceneHints().setLightCombineMode(LightCombineMode.Off);
+        getInfoText(PinchGestureEvent.class);
+        getInfoText(RotateGestureEvent.class);
+        getInfoText(PanGestureEvent.class);
+        getInfoText(SwipeGestureEvent.class);
+        getInfoText(LongPressGestureEvent.class);
 
         resetBalls(10);
     }
@@ -239,7 +263,45 @@ public class GesturesSwtExample implements Updater {
         new Label(parent, SWT.NONE).setText("Time Scale: Rotate (2 finger)");
         new Label(parent, SWT.NONE).setText("Clear: Swipe (2 finger)");
         new Label(parent, SWT.NONE).setText("Spawn Ball: Pan (3 fingers)");
-        new Label(parent, SWT.NONE).setText("Spawn Big Ball: Long Press (2 finger)");
+        new Label(parent, SWT.NONE).setText("Spawn Big Ball: Long Press (1 finger)");
+    }
+
+    private BasicText getInfoText(final Class clazz) {
+        BasicText basicText = eventInfo.get(clazz);
+        if (basicText == null) {
+            final int i = eventInfo.size();
+            final double infoStartY = _canvas.getCanvasRenderer().getCamera().getHeight() - 10;
+            basicText = new TimedText("text_" + clazz.getSimpleName(), "", 20);
+            basicText.setAlign(Align.NorthWest);
+            basicText.setTranslation(new Vector3(10, infoStartY - i * 22, 0));
+            textNode.attachChild(basicText);
+            eventInfo.put(clazz, basicText);
+        }
+        return basicText;
+    }
+
+    private void logGestureEvent(final AbstractGestureEvent event) {
+        final long thisTime = System.currentTimeMillis();
+        final double elapsed = (thisTime - startTime) / 1000.0;
+        final double delta = (thisTime - lastTime) / 1000.0;
+        lastTime = thisTime;
+        if (delta > 1.0) {
+            eventCount.clear();
+        }
+        int total;
+        final Integer et = eventTotal.get(event.getClass());
+        total = et == null ? 1 : et + 1;
+        eventTotal.put(event.getClass(), total);
+
+        final Integer ec = eventCount.get(event.getClass());
+        final int count = ec == null ? 1 : ec + 1;
+        eventCount.put(event.getClass(), count);
+
+        final BasicText infoText = getInfoText(event.getClass());
+        final String info = String.format("%25s \t %4d \t %5d \t % 3.3f \t % 3.3f", event.getClass().getSimpleName(),
+                count, total, delta, elapsed);
+        infoText.setText(info);
+        // System.out.println(info);
     }
 
     private void setupCanvas(final Shell shell, final Composite parent, final BasicScene scene,
@@ -288,6 +350,7 @@ public class GesturesSwtExample implements Updater {
                     public void perform(final Canvas source, final TwoInputStates inputStates, final double tpf) {
                         final PinchGestureEvent event = inputStates.getCurrent().getGestureState()
                                 .first(PinchGestureEvent.class);
+                        logGestureEvent(event);
                         // scale the balls
                         if (event.isStartOfGesture()) {
                             workScale = ballScale;
@@ -308,6 +371,7 @@ public class GesturesSwtExample implements Updater {
                     public void perform(final Canvas source, final TwoInputStates inputStates, final double tpf) {
                         final RotateGestureEvent event = inputStates.getCurrent().getGestureState()
                                 .first(RotateGestureEvent.class);
+                        logGestureEvent(event);
                         // Alter time scale
                         currentRot += event.getDeltaRadians();
                         currentRot = MathUtils.clamp(currentRot, 0, MathUtils.PI);
@@ -323,6 +387,7 @@ public class GesturesSwtExample implements Updater {
                     public void perform(final Canvas source, final TwoInputStates inputStates, final double tpf) {
                         final PanGestureEvent event = inputStates.getCurrent().getGestureState()
                                 .first(PanGestureEvent.class);
+                        logGestureEvent(event);
 
                         if (event.isStartOfGesture()) {
                             oldX = event.getX();
@@ -348,6 +413,8 @@ public class GesturesSwtExample implements Updater {
                     public void perform(final Canvas source, final TwoInputStates inputStates, final double tpf) {
                         final SwipeGestureEvent event = inputStates.getCurrent().getGestureState()
                                 .first(SwipeGestureEvent.class);
+                        logGestureEvent(event);
+
                         resetBalls(0);
                     }
                 }));
@@ -358,6 +425,7 @@ public class GesturesSwtExample implements Updater {
                     public void perform(final Canvas source, final TwoInputStates inputStates, final double tpf) {
                         final LongPressGestureEvent event = inputStates.getCurrent().getGestureState()
                                 .first(LongPressGestureEvent.class);
+                        logGestureEvent(event);
 
                         // spawn a larger bubble
                         spawnExtraBall(shell.getLocation(), scene, event, 3.0);
@@ -411,4 +479,32 @@ public class GesturesSwtExample implements Updater {
         return retVal;
     }
 
+    public class TimedText extends BasicText {
+        float alpha = 0.0f;
+
+        public TimedText(final String name, final String text, final double fontSize) {
+            super(name, text, DEFAULT_FONT, fontSize);
+            final SpatialController<TimedText> controller = new SpatialController<TimedText>() {
+                @Override
+                public void update(final double time, final TimedText caller) {
+                    final float wtime = (float) (time / timeScale);
+                    alpha = alpha - wtime * 0.1f;
+                    if (alpha > 0.95) {
+                        caller.setTextColor(1.0f, 0.5f, 0.5f, 1f);
+                    } else if (alpha < 0.0) {
+                        caller.setTextColor(0f, 0f, 0f, 0f);
+                    } else {
+                        caller.setTextColor(0.5f, 0.5f, 0.7f, alpha);
+                    }
+                }
+            };
+            addController(controller);
+        }
+
+        @Override
+        public void setText(final String text) {
+            alpha = 1f;
+            super.setText(text);
+        }
+    }
 }
